@@ -9,19 +9,19 @@ pipeline {
     }
 
     stages {
-        stage('Checkout') {
-            steps {
-                script {
-                    echo "Checking out source code"
-                    sh "git clone ${GIT_URL}"
-                }
-            }
-        }
+        // stage('Checkout') {
+        //     steps {
+        //         script {
+        //             echo "Checking out source code"
+        //             sh "git clone ${GIT_URL}"
+        //         }
+        //     }
+        // }
         stage('Docker Build') {
             steps {
                 script {
                     echo "Building Docker image for Calculator App"
-                    sh "cd calculator && docker build -t calculator-app:${BUILD_NUMBER} ."
+                    sh "cd calculator && /opt/homebrew/bin/docker build -t calculator-app:${BUILD_NUMBER} ."
                 }
             }
         }
