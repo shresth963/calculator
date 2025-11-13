@@ -7,11 +7,6 @@ pipeline {
         PYTHON = "python3"
     }
 
-    options {
-        timestamps()
-        ansiColor('xterm')
-    }
-
     stages {
         stage('Prepare Workspace') {
             steps {
