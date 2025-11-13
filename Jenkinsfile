@@ -1,6 +1,9 @@
 pipeline {
     agent any
 
+   environment {
+        GIT_URL = "git@github.com:shresth963/calculator.git"
+    }
    parameters {
         string(name: 'BUILD_NUMBER', defaultValue: '1', description: 'Build number for the Docker image')
     }
@@ -10,7 +13,7 @@ pipeline {
             steps {
                 script {
                     echo "Checking out source code"
-                    checkout scm
+                    sh "git clone ${GIT_URL}"
                 }
             }
         }
