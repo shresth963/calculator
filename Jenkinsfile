@@ -10,6 +10,7 @@ pipeline {
             steps {
                 script {
                     echo "Building Docker image for Calculator App"
+                    sh "whoami"
                     sh "docker build -t calculator-app:${BUILD_NUMBER} ."
                 }
             }
