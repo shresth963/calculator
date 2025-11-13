@@ -28,7 +28,8 @@ def api():
     number2 = request.json.get("number2")
     operator = request.json.get("operator")
 
-    if not number1 or not number2 or not operator:
+    # Treat explicit None as missing; allow values like "0" or 0
+    if number1 is None or number2 is None or operator is None:
         return jsonify({"msg": "Missing values"}), 400
 
     expression = str(number1) + operator + str(number2)
