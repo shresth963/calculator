@@ -5,6 +5,15 @@ pipeline {
         VENV = "${WORKSPACE}/venv"
         NODE_OPTIONS = "--openssl-legacy-provider"
         PYTHON = "python3"
+        PATH = "${WORKSPACE}/venv/bin:${PATH}"
+        YARN_CACHE_FOLDER = "${WORKSPACE}/.yarn-cache"
+    }
+
+    options {
+        disableConcurrentBuilds()
+        skipDefaultCheckout()
+        ansiColor('xterm')
+        timestamps()
     }
 
     stages {
@@ -38,44 +47,50 @@ pipeline {
 
         stage('Install Frontend Dependencies') {
             steps {
-                sh '''
-                set -euxo pipefail
-                cd frontend
-                if command -v corepack >/dev/null 2>&1; then
-                  corepack enable
-                fi
-                if ! command -v yarn >/dev/null 2>&1; then
-                  npm install -g yarn
-                fi
-                yarn install --frozen-lockfile
-                '''
+                dir('frontend') {
+                    sh '''
+                    set -euxo pipefail
+                    node --version
+                    if command -v corepack >/dev/null 2>&1; then
+                      corepack enable
+                      corepack prepare yarn@1.22.22 --activate
+                    elif ! command -v yarn >/dev/null 2>&1; then
+                      npm install -g yarn
+                    fi
+                    yarn install --frozen-lockfile
+                    '''
+                }
             }
         }
 
         stage('Frontend Tests') {
             steps {
-                withEnv(['CI=true']) {
-                    sh '''
-                    set -euxo pipefail
-                    cd frontend
-                    yarn test --watchAll=false
-                    '''
+                dir('frontend') {
+                    withEnv(["CI=true", "NODE_OPTIONS=${NODE_OPTIONS}"]) {
+                        sh '''
+                        set -euxo pipefail
+                        yarn test --watchAll=false
+                        '''
+                    }
                 }
             }
         }
 
         stage('Build Frontend') {
             steps {
-                sh '''
-                set -euxo pipefail
-                cd frontend
-                yarn build
-                '''
+                dir('frontend') {
+                    withEnv(["NODE_OPTIONS=${NODE_OPTIONS}"]) {
+                        sh '''
+                        set -euxo pipefail
+                        yarn build
+                        '''
+                    }
+                }
                 sh '''
                 set -euxo pipefail
                 rm -rf backend/client
                 mkdir -p backend/client
-                cp -R frontend/build/. backend/client/
+                rsync -a frontend/build/ backend/client/
                 '''
             }
         }
@@ -100,6 +115,7 @@ pipeline {
             sh '''
             set +e
             rm -rf "${VENV}"
+            rm -rf frontend/node_modules frontend/build
             '''
         }
         success {
