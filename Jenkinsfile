@@ -10,14 +10,6 @@ pipeline {
     }
 
     stages {
-        stage('Prepare Workspace') {
-            steps {
-                ansiColor('xterm') {
-                    deleteDir()
-                    checkout scm
-                }
-            }
-        }
 
 
         stage('Docker Build') {
