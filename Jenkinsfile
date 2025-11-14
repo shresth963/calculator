@@ -2,14 +2,17 @@ pipeline {
   agent any
 
   parameters {
-    string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker image tag')
-    string(name: 'DOCKER_USER', defaultValue: 'shresth111', description: 'Docker Hub user')
-    password(name: 'DOCKER_PASS', defaultValue: '', description: 'Docker Hub password or access token (temporary)')
+    string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker image tag to push (e.g. 1.0 or latest)')
+    // Optional quick-test fallback (less secure) — only use for temporary testing
+    booleanParam(name: 'USE_PARAM_CREDS', defaultValue: false, description: 'If true, use DOCKER_USER/DOCKER_PASS parameters to login (temporary)')
+    string(name: 'DOCKER_USER', defaultValue: 'shresth111', description: 'Docker Hub user (used only if USE_PARAM_CREDS=true)')
+    password(name: 'DOCKER_PASS', defaultValue: '', description: 'Docker Hub password/token (used only if USE_PARAM_CREDS=true)')
   }
 
   environment {
     IMAGE_NAME = "calculator"
     DOCKERHUB_REPO = "${params.DOCKER_USER}/${env.IMAGE_NAME}"
+    CRED_ID = "docker-hub-creds"   // ensure this credential exists in Jenkins global store
   }
 
   stages {
@@ -17,41 +20,91 @@ pipeline {
       steps { checkout scm }
     }
 
+    stage('Detect docker') {
+      steps {
+        script {
+          // Try common paths and `command -v docker`
+          def paths = ['/opt/homebrew/bin/docker', '/usr/local/bin/docker', '/usr/bin/docker', 'docker']
+          env.DOCKER_BIN = ''
+          for (p in paths) {
+            def out = sh(script: "command -v ${p} >/dev/null 2>&1 && echo ${p} || true", returnStdout: true).trim()
+            if (out) { env.DOCKER_BIN = out; break }
+          }
+          if (!env.DOCKER_BIN) {
+            env.DOCKER_BIN = sh(script: "command -v docker || true", returnStdout: true).trim()
+          }
+          if (!env.DOCKER_BIN) {
+            error """docker CLI not found on this node.
+Fixes:
+  • Start Docker Desktop on the machine running this agent, or
+  • Install Docker so 'docker' is available in PATH, or
+  • Add the docker folder (e.g. /opt/homebrew/bin) to the node PATH in Jenkins node config.
+"""
+          }
+          echo "Using docker binary: ${env.DOCKER_BIN}"
+          sh "${env.DOCKER_BIN} --version || true"
+        }
+      }
+    }
+
     stage('Build image') {
       steps {
         script {
           if (!fileExists('calculator/Dockerfile')) {
-            error "calculator/Dockerfile not found in workspace"
+            error "calculator/Dockerfile not found in workspace — ensure repository layout is correct"
           }
-          sh "docker build -t ${env.IMAGE_NAME}:${params.IMAGE_TAG} ./calculator"
+          sh "${env.DOCKER_BIN} build -t ${env.IMAGE_NAME}:${params.IMAGE_TAG} ./calculator"
         }
       }
     }
 
-    stage('Tag & Login') {
+    stage('Tag image for Docker Hub') {
       steps {
         script {
-          sh "docker tag ${env.IMAGE_NAME}:${params.IMAGE_TAG} ${DOCKERHUB_REPO}:${params.IMAGE_TAG}"
-          // login using provided parameters (less secure, only for now)
-          sh '''
-            set -e
-            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-            echo "Logged into Docker Hub as $DOCKER_USER"
-          '''
+          // Tag using DOCKER_USER (either from param or from creds later)
+          sh "${env.DOCKER_BIN} tag ${env.IMAGE_NAME}:${params.IMAGE_TAG} ${params.DOCKER_USER}/${env.IMAGE_NAME}:${params.IMAGE_TAG}"
         }
       }
     }
 
-    stage('Push') {
+    stage('Login & Push') {
       steps {
-        sh "docker push ${DOCKERHUB_REPO}:${params.IMAGE_TAG}"
+        script {
+          // If user explicitly chose parameter-based creds for a quick test, use them.
+          if (params.USE_PARAM_CREDS && params.DOCKER_PASS?.trim()) {
+            echo "Using parameter-based credentials (insecure, temporary)."
+            sh """
+              set -e
+              echo "${params.DOCKER_PASS}" | ${env.DOCKER_BIN} login -u "${params.DOCKER_USER}" --password-stdin
+              ${env.DOCKER_BIN} push ${params.DOCKER_USER}/${env.IMAGE_NAME}:${params.IMAGE_TAG}
+              ${env.DOCKER_BIN} logout || true
+            """
+          } else {
+            // Preferred secure flow: use Jenkins credential docker-hub-creds
+            echo "Attempting secure login using Jenkins credential id '${CRED_ID}'..."
+            withCredentials([usernamePassword(credentialsId: "${CRED_ID}", usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+              sh """
+                set -e
+                echo "\$DH_PASS" | ${env.DOCKER_BIN} login -u "\$DH_USER" --password-stdin
+                ${env.DOCKER_BIN} push \$DH_USER/${env.IMAGE_NAME}:${params.IMAGE_TAG}
+                ${env.DOCKER_BIN} logout || true
+              """
+            }
+          }
+        }
       }
     }
   }
 
   post {
-    always { sh 'docker logout || true' }
-    success { echo "Pushed ${DOCKERHUB_REPO}:${params.IMAGE_TAG}" }
-    failure { echo "Push failed — check console for the error" }
+    always {
+      sh 'echo "Cleaning up (docker logout)"; true'
+    }
+    success {
+      echo "SUCCESS: pushed -> https://hub.docker.com/r/${params.DOCKER_USER}/${env.IMAGE_NAME}:${params.IMAGE_TAG}"
+    }
+    failure {
+      echo "FAILED: check the console for errors above."
+    }
   }
 }
