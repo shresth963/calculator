@@ -13,7 +13,6 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                echo "Checking out source code from ${GIT_URL}"
                 checkout scm
             }
         }
@@ -21,22 +20,32 @@ pipeline {
         stage('Prepare Docker') {
             steps {
                 script {
-                    // Safer way to detect docker binary: use a small shell script and trim output
-                    def dockerBin = sh(
-                        script: '''#!/bin/bash
-                        set -euo pipefail
-                        if command -v docker >/dev/null 2>&1; then
-                          command -v docker
-                        else
-                          echo /opt/homebrew/bin/docker
-                        fi
-                        ''',
-                        returnStdout: true
-                    ).trim()
+                    // detect docker binary (safer)
+                    env.DOCKER_BIN = sh(script: '''#!/bin/bash
+                      if command -v docker >/dev/null 2>&1; then
+                        command -v docker
+                      elif [ -x "/opt/homebrew/bin/docker" ]; then
+                        echo /opt/homebrew/bin/docker
+                      else
+                        echo docker
+                      fi
+                    ''', returnStdout: true).trim()
 
-                    // assign into environment var for later stages
-                    env.DOCKER_BIN = dockerBin
                     echo "Using docker binary: ${env.DOCKER_BIN}"
+
+                    // create a temporary docker config dir without credsStore to avoid credential helper calls
+                    env.TMP_DOCKER_CONFIG = "${WORKSPACE}/.tmp-docker-config"
+                    sh """
+                      rm -rf "${env.TMP_DOCKER_CONFIG}"
+                      mkdir -p "${env.TMP_DOCKER_CONFIG}"
+                      # create minimal config.json that does NOT reference any credential helper
+                      cat > "${env.TMP_DOCKER_CONFIG}/config.json" <<'JSON'
+                      {
+                        "auths": {}
+                      }
+                      JSON
+                    """
+                    echo "Created temp DOCKER_CONFIG at ${env.TMP_DOCKER_CONFIG}"
                 }
             }
         }
@@ -45,24 +54,21 @@ pipeline {
             steps {
                 script {
                     def tag = params.BUILD_NUMBER
-                    def dockerfileExists = fileExists('calculator/Dockerfile')
-                    if (dockerfileExists) {
+                    // Use the temporary DOCKER_CONFIG when building so docker won't try credential helpers
+                    def dockerCmdPrefix = "DOCKER_CONFIG=${env.TMP_DOCKER_CONFIG} ${env.DOCKER_BIN}"
+                    if (fileExists('calculator/Dockerfile')) {
                         echo "Dockerfile found — building image calculator:${tag} from ./calculator"
-                        sh """${env.DOCKER_BIN} build -t calculator:${tag} ./calculator"""
+                        sh "${dockerCmdPrefix} build -t calculator:${tag} ./calculator"
                     } else {
-                        echo "No Dockerfile at calculator/Dockerfile — will look for an existing local image named 'calculator:${tag}' or 'calculator:latest'"
+                        echo "No Dockerfile found; checking local images"
                         def imgCheck = sh(script: "${env.DOCKER_BIN} images -q calculator:${tag} || true", returnStdout: true).trim()
                         if (!imgCheck) {
-                            echo "No local image calculator:${tag} found. Attempting to find calculator:latest..."
                             def latestCheck = sh(script: "${env.DOCKER_BIN} images -q calculator:latest || true", returnStdout: true).trim()
                             if (!latestCheck) {
-                                error("No Dockerfile and no local image 'calculator:${tag}' or 'calculator:latest' found. Add Dockerfile or pre-build the image.")
+                                error("No Dockerfile and no local image 'calculator:${tag}' or 'calculator:latest' found.")
                             } else {
-                                echo "Found calculator:latest — will retag it to calculator:${tag}"
-                                sh """${env.DOCKER_BIN} tag calculator:latest calculator:${tag}"""
+                                sh "${dockerCmdPrefix} tag calculator:latest calculator:${tag}"
                             }
-                        } else {
-                            echo "Local image calculator:${tag} already exists — skipping build."
                         }
                     }
                 }
@@ -73,8 +79,8 @@ pipeline {
             steps {
                 script {
                     def tag = params.BUILD_NUMBER
-                    echo "Tagging local image calculator:${tag} -> ${DOCKERHUB}/calculator:${tag}"
-                    sh """${env.DOCKER_BIN} tag calculator:${tag} ${DOCKERHUB}/calculator:${tag}"""
+                    def dockerCmdPrefix = "DOCKER_CONFIG=${env.TMP_DOCKER_CONFIG} ${env.DOCKER_BIN}"
+                    sh "${dockerCmdPrefix} tag calculator:${tag} ${DOCKERHUB}/calculator:${tag}"
                 }
             }
         }
@@ -84,20 +90,20 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
                     script {
                         def tag = params.BUILD_NUMBER
-                        sh '''
-                            set -e
-                            echo "Logging into Docker Hub as $DH_USER"
-                            echo "$DH_PASS" | ${DOCKER_BIN} login -u "$DH_USER" --password-stdin
+                        def dockerCmdPrefix = "DOCKER_CONFIG=${env.TMP_DOCKER_CONFIG} ${env.DOCKER_BIN}"
+                        sh """
+                          set -e
+                          echo "Logging into Docker Hub as \$DH_USER (using temp DOCKER_CONFIG)"
+                          echo "\$DH_PASS" | DOCKER_CONFIG=${env.TMP_DOCKER_CONFIG} ${env.DOCKER_BIN} login -u "\$DH_USER" --password-stdin
 
-                            echo "Pushing ${DOCKERHUB}/calculator:${tag}"
-                            ${DOCKER_BIN} push ${DOCKERHUB}/calculator:${tag}
+                          ${dockerCmdPrefix} push ${DOCKERHUB}/calculator:${tag}
 
-                            echo "Also tagging and pushing latest"
-                            ${DOCKER_BIN} tag ${DOCKERHUB}/calculator:${tag} ${DOCKERHUB}/calculator:latest
-                            ${DOCKER_BIN} push ${DOCKERHUB}/calculator:latest
+                          ${dockerCmdPrefix} tag ${DOCKERHUB}/calculator:${tag} ${DOCKERHUB}/calculator:latest
+                          ${dockerCmdPrefix} push ${DOCKERHUB}/calculator:latest
 
-                            ${DOCKER_BIN} logout || true
-                        '''.replace('${DOCKER_BIN}', env.DOCKER_BIN).replace('${DOCKERHUB}', env.DOCKERHUB)
+                          # cleanup: logout using the temp config (ignore errors)
+                          DOCKER_CONFIG=${env.TMP_DOCKER_CONFIG} ${env.DOCKER_BIN} logout || true
+                        """
                     }
                 }
             }
@@ -105,6 +111,10 @@ pipeline {
     }
 
     post {
+        always {
+            // cleanup temp config
+            sh "rm -rf ${WORKSPACE}/.tmp-docker-config || true"
+        }
         success {
             echo "Push finished: https://hub.docker.com/r/${DOCKERHUB}/calculator"
         }
