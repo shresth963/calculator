@@ -10,7 +10,6 @@ pipeline {
 
   options {
     timeout(time: 30, unit: 'MINUTES')
-    ansiColor('xterm')
     timestamps()
   }
 
@@ -86,7 +85,6 @@ pipeline {
                 sleep 3
               done
 
-              # if last push still failed, make the script fail
               if [ \$attempt -ge \$max ]; then
                 echo "Push failed after \$max attempts"
                 exit 1
