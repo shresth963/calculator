@@ -7,12 +7,12 @@ pipeline {
     booleanParam(name: 'USE_PARAM_CREDS', defaultValue: false, description: 'If true, use DOCKER_USER/DOCKER_PASS parameters to login (temporary)')
     string(name: 'DOCKER_USER', defaultValue: 'shresth111', description: 'Docker Hub user (used only if USE_PARAM_CREDS=true)')
     password(name: 'DOCKER_PASS', defaultValue: '', description: 'Docker Hub password/token (used only if USE_PARAM_CREDS=true)')
+    string(name: 'DOCKER_CREDENTIAL_ID', defaultValue: '', description: 'Optional Jenkins credential ID for Docker Hub login/push')
   }
 
   environment {
     IMAGE_NAME = "calculator"
     DOCKERHUB_REPO = "${params.DOCKER_USER}/${env.IMAGE_NAME}"
-    CRED_ID = "docker-hub-creds"   // ensure this credential exists in Jenkins global store
   }
 
   stages {
@@ -79,10 +79,10 @@ Fixes:
               ${env.DOCKER_BIN} push ${params.DOCKER_USER}/${env.IMAGE_NAME}:${params.IMAGE_TAG}
               ${env.DOCKER_BIN} logout || true
             """
-          } else {
-            // Preferred secure flow: use Jenkins credential docker-hub-creds
-            echo "Attempting secure login using Jenkins credential id '${CRED_ID}'..."
-            withCredentials([usernamePassword(credentialsId: "${CRED_ID}", usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+          } else if (params.DOCKER_CREDENTIAL_ID?.trim()) {
+            // Preferred secure flow: use Jenkins credential if provided
+            echo "Attempting secure login using Jenkins credential id '${params.DOCKER_CREDENTIAL_ID}'..."
+            withCredentials([usernamePassword(credentialsId: params.DOCKER_CREDENTIAL_ID, usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
               sh """
                 set -e
                 echo "\$DH_PASS" | ${env.DOCKER_BIN} login -u "\$DH_USER" --password-stdin
@@ -90,6 +90,8 @@ Fixes:
                 ${env.DOCKER_BIN} logout || true
               """
             }
+          } else {
+            echo "Skipping Docker Hub push: no credentials provided. Set DOCKER_CREDENTIAL_ID or enable USE_PARAM_CREDS."
           }
         }
       }
