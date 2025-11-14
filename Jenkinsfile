@@ -70,20 +70,17 @@ Fixes:
     stage('Login & Push') {
       steps {
         script {
-          def paramDockerPass = params.DOCKER_PASS ? params.DOCKER_PASS.getPlainText() : ''
-
           // Helper to push using plain parameters (not recommended for long-term use)
           def pushWithParams = {
-            if (!paramDockerPass?.trim()) {
-              error "DOCKER_PASS parameter is empty; cannot push with parameters."
-            }
             echo "Using parameter-based credentials (temporary fallback)."
-            sh """
-              set -e
-              echo "${paramDockerPass}" | ${env.DOCKER_BIN} login -u "${params.DOCKER_USER}" --password-stdin
-              ${env.DOCKER_BIN} push ${params.DOCKER_USER}/${env.IMAGE_NAME}:${params.IMAGE_TAG}
-              ${env.DOCKER_BIN} logout || true
-            """
+            withEnv(["PARAM_DOCKER_PASS=${params.DOCKER_PASS}"]) {
+              sh """
+                set -e
+                echo "\$PARAM_DOCKER_PASS" | ${env.DOCKER_BIN} login -u "${params.DOCKER_USER}" --password-stdin
+                ${env.DOCKER_BIN} push ${params.DOCKER_USER}/${env.IMAGE_NAME}:${params.IMAGE_TAG}
+                ${env.DOCKER_BIN} logout || true
+              """
+            }
           }
 
           if (params.USE_PARAM_CREDS) {
@@ -105,14 +102,14 @@ Fixes:
               return
             } catch (Exception credEx) {
               echo "Warning: credential '${params.DOCKER_CREDENTIAL_ID}' not usable (${credEx.message})."
-              if (!paramDockerPass?.trim()) {
+              if (!params.DOCKER_PASS) {
                 throw credEx
               }
               echo "Falling back to DOCKER_USER/DOCKER_PASS parameters."
             }
           }
 
-          if (paramDockerPass?.trim()) {
+          if (params.DOCKER_PASS) {
             pushWithParams()
           } else {
             error """
