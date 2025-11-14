@@ -70,33 +70,55 @@ Fixes:
     stage('Login & Push') {
       steps {
         script {
-          // If user explicitly chose parameter-based creds for a quick test, use them.
-          if (params.USE_PARAM_CREDS && params.DOCKER_PASS?.trim()) {
-            echo "Using parameter-based credentials (insecure, temporary)."
+          // Helper to push using plain parameters (not recommended for long-term use)
+          def pushWithParams = {
+            if (!params.DOCKER_PASS?.trim()) {
+              error "DOCKER_PASS parameter is empty; cannot push with parameters."
+            }
+            echo "Using parameter-based credentials (temporary fallback)."
             sh """
               set -e
               echo "${params.DOCKER_PASS}" | ${env.DOCKER_BIN} login -u "${params.DOCKER_USER}" --password-stdin
               ${env.DOCKER_BIN} push ${params.DOCKER_USER}/${env.IMAGE_NAME}:${params.IMAGE_TAG}
               ${env.DOCKER_BIN} logout || true
             """
+          }
+
+          if (params.USE_PARAM_CREDS) {
+            pushWithParams()
+            return
+          }
+
+          if (params.DOCKER_CREDENTIAL_ID?.trim()) {
+            try {
+              echo "Attempting secure login using Jenkins credential id '${params.DOCKER_CREDENTIAL_ID}'..."
+              withCredentials([usernamePassword(credentialsId: params.DOCKER_CREDENTIAL_ID, usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+                sh """
+                  set -e
+                  echo "\$DH_PASS" | ${env.DOCKER_BIN} login -u "\$DH_USER" --password-stdin
+                  ${env.DOCKER_BIN} push \$DH_USER/${env.IMAGE_NAME}:${params.IMAGE_TAG}
+                  ${env.DOCKER_BIN} logout || true
+                """
+              }
+              return
+            } catch (Exception credEx) {
+              echo "Warning: credential '${params.DOCKER_CREDENTIAL_ID}' not usable (${credEx.message})."
+              if (!params.DOCKER_PASS?.trim()) {
+                throw credEx
+              }
+              echo "Falling back to DOCKER_USER/DOCKER_PASS parameters."
+            }
+          }
+
+          if (params.DOCKER_PASS?.trim()) {
+            pushWithParams()
           } else {
-            if (!params.DOCKER_CREDENTIAL_ID?.trim()) {
-              error """
+            error """
 No Docker Hub credentials provided.
-Set DOCKER_CREDENTIAL_ID to the Jenkins credential ID (preferred),
-or toggle USE_PARAM_CREDS with DOCKER_USER/DOCKER_PASS for a one-off run.
+Either:
+  • Set DOCKER_CREDENTIAL_ID to a valid Jenkins credential, or
+  • Enable USE_PARAM_CREDS and provide DOCKER_USER/DOCKER_PASS.
 """
-            }
-            // Preferred secure flow: use Jenkins credential if provided
-            echo "Attempting secure login using Jenkins credential id '${params.DOCKER_CREDENTIAL_ID}'..."
-            withCredentials([usernamePassword(credentialsId: params.DOCKER_CREDENTIAL_ID, usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
-              sh """
-                set -e
-                echo "\$DH_PASS" | ${env.DOCKER_BIN} login -u "\$DH_USER" --password-stdin
-                ${env.DOCKER_BIN} push \$DH_USER/${env.IMAGE_NAME}:${params.IMAGE_TAG}
-                ${env.DOCKER_BIN} logout || true
-              """
-            }
           }
         }
       }
