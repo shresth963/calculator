@@ -49,7 +49,7 @@ pipeline {
 
     stage('Push Image') {
       when {
-        expression { env.DOCKER_CREDENTIAL_ID?.trim() }
+        expression { return env.DOCKER_CREDENTIAL_ID?.trim() }
       }
       steps {
         script {
@@ -69,10 +69,12 @@ pipeline {
 
   post {
     success {
-      if (env.DOCKER_CREDENTIAL_ID?.trim()) {
-        echo "SUCCESS: pushed ${env.IMAGE_NAME}:${env.IMAGE_TAG} to Docker Hub."
-      } else {
-        echo "SUCCESS: image ${env.IMAGE_NAME}:${env.IMAGE_TAG} built locally (push skipped; set DOCKER_CREDENTIAL_ID to enable pushing)."
+      script {
+        if (env.DOCKER_CREDENTIAL_ID?.trim()) {
+          echo "SUCCESS: pushed ${env.IMAGE_NAME}:${env.IMAGE_TAG} to Docker Hub."
+        } else {
+          echo "SUCCESS: image ${env.IMAGE_NAME}:${env.IMAGE_TAG} built locally (push skipped; set DOCKER_CREDENTIAL_ID to enable pushing)."
+        }
       }
     }
     failure {
