@@ -79,7 +79,14 @@ Fixes:
               ${env.DOCKER_BIN} push ${params.DOCKER_USER}/${env.IMAGE_NAME}:${params.IMAGE_TAG}
               ${env.DOCKER_BIN} logout || true
             """
-          } else if (params.DOCKER_CREDENTIAL_ID?.trim()) {
+          } else {
+            if (!params.DOCKER_CREDENTIAL_ID?.trim()) {
+              error """
+No Docker Hub credentials provided.
+Set DOCKER_CREDENTIAL_ID to the Jenkins credential ID (preferred),
+or toggle USE_PARAM_CREDS with DOCKER_USER/DOCKER_PASS for a one-off run.
+"""
+            }
             // Preferred secure flow: use Jenkins credential if provided
             echo "Attempting secure login using Jenkins credential id '${params.DOCKER_CREDENTIAL_ID}'..."
             withCredentials([usernamePassword(credentialsId: params.DOCKER_CREDENTIAL_ID, usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
@@ -90,8 +97,6 @@ Fixes:
                 ${env.DOCKER_BIN} logout || true
               """
             }
-          } else {
-            echo "Skipping Docker Hub push: no credentials provided. Set DOCKER_CREDENTIAL_ID or enable USE_PARAM_CREDS."
           }
         }
       }
