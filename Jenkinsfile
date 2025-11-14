@@ -4,7 +4,6 @@ pipeline {
   environment {
     IMAGE_NAME = "calculator"
     IMAGE_TAG = "${env.BUILD_NUMBER ?: 'latest'}"
-    DOCKER_CREDENTIAL_ID = "docker-hub-creds" // Update to your Jenkins credential ID
   }
 
   stages {
@@ -49,6 +48,9 @@ pipeline {
     }
 
     stage('Push Image') {
+      when {
+        expression { env.DOCKER_CREDENTIAL_ID?.trim() }
+      }
       steps {
         script {
           withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIAL_ID, usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
@@ -67,7 +69,11 @@ pipeline {
 
   post {
     success {
-      echo "SUCCESS: pushed ${env.IMAGE_NAME}:${env.IMAGE_TAG} to Docker Hub."
+      if (env.DOCKER_CREDENTIAL_ID?.trim()) {
+        echo "SUCCESS: pushed ${env.IMAGE_NAME}:${env.IMAGE_TAG} to Docker Hub."
+      } else {
+        echo "SUCCESS: image ${env.IMAGE_NAME}:${env.IMAGE_TAG} built locally (push skipped; set DOCKER_CREDENTIAL_ID to enable pushing)."
+      }
     }
     failure {
       echo "FAILED: check the stage logs for details."
