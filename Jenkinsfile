@@ -32,4 +32,5 @@ pipeline {
                 '''
             }
         }
-    }
+    } // closing stages
+} // closing pipeline
