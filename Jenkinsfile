@@ -33,4 +33,8 @@ pipeline {
             }
         }
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dcf76c4 (Update Jenkinsfile and add nginx config)
